@@ -65,13 +65,15 @@ sequenceDiagram
 ## 📂 Repository Structure
 
 ```
-├── laptop_rfid_sync_server.py      # Core Python diagnostic, dipping sync & web server
-├── run_laptop_sync_server.bat       # 1-Click launcher script for Windows
-├── requirements.txt                 # Python dependencies
-├── SLD1010_ESP32_Test_Report.md     # Full engineering test & validation report
+├── laptop_rfid_sync_server.py             # Core Python diagnostic, dipping sync & web server
+├── run_laptop_sync_server.bat              # 1-Click launcher script for Windows
+├── requirements.txt                        # Python dependencies
+├── SLD1010_ESP32_Integration_Test_Report.md# Full engineering test & validation report
+├── ESP32_Follow_Server_LED/
+│   └── ESP32_Follow_Server_LED.ino         # [PRODUCTION] 2-LED Industrial Status Controller (D25 Blue Wi-Fi, D33 Green Server)
 ├── ESP32_Firmware/
-│   └── ESP32_Follow_Server_LED.ino  # ESP32 Arduino sketch for 3-LED industrial station
-└── README.md                        # Documentation
+│   └── ESP32_Follow_Server_LED.ino         # [TESTING / REFERENCE] 3-LED Prototype Dipping Simulation (D21, D19, D18)
+└── README.md                               # Documentation
 ```
 
 ---
@@ -95,16 +97,23 @@ sequenceDiagram
 
 ### 2. ESP32 Controller Setup
 
-1. Open `ESP32_Firmware/ESP32_Follow_Server_LED.ino` in Arduino IDE.
+#### A) Production Industrial Deployment (2-LED System):
+1. Open `ESP32_Follow_Server_LED/ESP32_Follow_Server_LED.ino` in Arduino IDE.
 2. Select Board: `ESP32 Dev Module`.
-3. Verify Wi-Fi credentials:
+3. Verify Wi-Fi credentials & static laptop server IP:
    ```cpp
-   const char* ssid     = "Simpel_Ai_2nd";
-   const char* password = "Simpel@26";
-   const char* laptop_ip   = "192.168.0.118"; // Laptop Wi-Fi IP
+   const char* ssid        = "Simpel_Ai_2nd";
+   const char* password    = "Simpel@26";
+   const char* laptop_ip   = "192.168.0.118";
    ```
 4. Click **Upload**.
-5. At boot, the ESP32 performs an automatic sequential LED self-test (`D21` $\rightarrow$ `D19` $\rightarrow$ `D18`), connects to Wi-Fi, and turns `D21` **SOLID ON** once heartbeats are detected.
+5. **Logic:**
+   - 🟡 **Yellow LED:** Hardwired direct to 12V SMPS (Device Power ON).
+   - 🔵 **Blue LED (D25):** SOLID ON when connected to Wi-Fi. Turns OFF immediately if Wi-Fi drops.
+   - 🟢 **Green LED (D33):** SOLID ON when laptop server is actively running (`HTTP 200`). Turns OFF immediately (< 1s) if server stops or Wi-Fi drops.
+
+#### B) Prototype Dipping Simulation (3-LED Test Bench - Reference Only):
+- Open `ESP32_Firmware/ESP32_Follow_Server_LED.ino` for the previous mutually-exclusive 3-LED dipping test bench (`D21` Heartbeat, `D19` Dipping Active / Flashing Complete, `D18` Disconnected Fault).
 
 ---
 
