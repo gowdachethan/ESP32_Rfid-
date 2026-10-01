@@ -37,7 +37,8 @@ const char* ssid     = "Simpel_Ai_2nd";
 const char* password = "Simpel@26";
 
 // ====== LAPTOP SERVER IP ======
-const char* laptop_ip   = "192.168.0.54"; 
+// Note: Set this to your laptop's current Wi-Fi IP (192.168.0.118) or Hotspot IP (192.168.137.1)
+const char* laptop_ip   = "192.168.0.118"; 
 const int   laptop_port = 5000;
 
 // ====== 3 INDUSTRIAL PINS ======

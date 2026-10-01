@@ -98,12 +98,14 @@ def broadcast_udp(message: str):
     try:
         data = message.encode('utf-8')
         udp_sock.sendto(data, ('255.255.255.255', UDP_PORT))
-        with system_lock:
-            target_esp = reader_state["esp32_ip"]
-        if target_esp:
-            udp_sock.sendto(data, (target_esp, UDP_PORT))
+        udp_sock.sendto(data, ('192.168.3.255', UDP_PORT))
         udp_sock.sendto(data, ('192.168.0.255', UDP_PORT))
         udp_sock.sendto(data, ('192.168.137.255', UDP_PORT))
+        udp_sock.sendto(data, ('192.168.0.34', UDP_PORT))
+        with system_lock:
+            target_esp = reader_state.get("esp32_ip")
+        if target_esp and target_esp != "192.168.0.34":
+            udp_sock.sendto(data, (target_esp, UDP_PORT))
     except Exception:
         pass
 
@@ -316,11 +318,13 @@ class UniversalRFIDHandler(BaseHTTPRequestHandler):
                     "history": dipping_state["history"][:10]
                 }
 
+            body = json.dumps(resp).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps(resp).encode('utf-8'))
+            self.wfile.write(body)
             return
 
         # -----------------------------------------------------------------
@@ -338,11 +342,13 @@ class UniversalRFIDHandler(BaseHTTPRequestHandler):
                     "tag_count": reader_state["tag_count"],
                     "last_tag": reader_state["last_tag"]
                 }
+            body = json.dumps(resp).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps(resp).encode('utf-8'))
+            self.wfile.write(body)
             return
 
         # -----------------------------------------------------------------
@@ -372,21 +378,25 @@ class UniversalRFIDHandler(BaseHTTPRequestHandler):
             else:
                 msg = f"Unknown action: {action}"
 
+            body = json.dumps({"success": True, "message": msg}).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({"success": True, "message": msg}).encode('utf-8'))
+            self.wfile.write(body)
             return
 
         # -----------------------------------------------------------------
         # WEB DASHBOARD (Industrial Dipping Station Interface)
         # -----------------------------------------------------------------
         html = self._render_dashboard_html()
+        body = html.encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
         self.end_headers()
-        self.wfile.write(html.encode('utf-8'))
+        self.wfile.write(body)
 
     def _render_dashboard_html(self) -> str:
         return """<!DOCTYPE html>
