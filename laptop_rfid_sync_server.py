@@ -306,9 +306,8 @@ class UniversalRFIDHandler(BaseHTTPRequestHandler):
                     "last_duration_str": dipping_state["last_duration_str"],
                     "cycle_count": dipping_state["cycle_count"],
                     "min_dip_time_sec": dipping_state["min_dip_time_sec"],
-                    # Mutually exclusive logic:
-                    # D21: Heartbeat glows Solid ON ONLY when reader is alive AND NO tag dipping is active
-                    "led_d21": is_alive and (dipping_state["state"] != "DIPPING") and not is_complete_pulse,
+                    # D21: Heartbeat glows Solid ON whenever reader is alive (stays ON during dipping too)
+                    "led_d21": is_alive,
                     # D19: Solid ON during dipping, pulses complete on lift
                     "led_d19": (dipping_state["state"] == "DIPPING") or is_complete_pulse,
                     # D18: Solid ON when disconnected (> 20s)

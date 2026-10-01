@@ -1,22 +1,21 @@
 /*
  * =================================================================================
- * ESP32 INDUSTRIAL 3-LED CONTROLLER (MUTUALLY EXCLUSIVE STATUS)
+ * ESP32 INDUSTRIAL 3-LED CONTROLLER
  * =================================================================================
- * EXACT LOGIC (AS REQUESTED):
+ * EXACT LOGIC:
  *  1. STANDBY / IDLE (No tag in bath):
  *     - D21 (Heartbeat)    : SOLID ON (GLOWS) while heartbeats arrive (<= 20s).
- *     - D19 (Tag / Dip)    : OFF.
+ *     - D19 (Tag / Dip)    : OFF (No tag data available).
  *     - D18 (Disconnected): OFF.
  *
  *  2. DIPPING IN PROGRESS (Crane lowers jig into bath -> Tag detected):
- *     - D21 (Heartbeat)    : TURNS OFF! (Heartbeat indicator turns off during dip)
- *     - D19 (Tag / Dip)    : SOLID ON (GLOWS)! (Only D19 stays solid while dipping)
+ *     - D21 (Heartbeat)    : STAYS SOLID ON! (Heartbeat indicator remains glowing while dipping)
+ *     - D19 (Tag / Dip)    : SOLID ON (GLOWS)! (Dipping active timer running)
  *     - D18 (Disconnected): OFF.
- *     - Dipping timer runs live on server.
  *
  *  3. DIPPING COMPLETE (Crane lifts jig out of bath -> Tag detected 2nd time):
+ *     - D21 (Heartbeat)    : STAYS SOLID ON!
  *     - D19 (Tag / Dip)    : Flashes rapidly for 3.5s (Dipping Complete signal), then turns OFF!
- *     - D21 (Heartbeat)    : TURNS BACK SOLID ON! (System returns to standby for next jig).
  *     - D18 (Disconnected): OFF.
  *
  *  4. DISCONNECTED / FAULT (> 20s timeout or Wi-Fi lost):
@@ -234,7 +233,7 @@ void loop() {
   }
 
   // -------------------------------------------------------------
-  // 4. MUTUALLY EXCLUSIVE 3-LED OUTPUT CONTROL
+  // 4. 3-LED OUTPUT CONTROL
   // -------------------------------------------------------------
   bool isDisconnected = !readerAlive || serverConnectionLost;
 
@@ -244,28 +243,29 @@ void loop() {
     digitalWrite(PIN_D21_HEARTBEAT,    LOW);  // D21 OFF
     digitalWrite(PIN_D19_TAG_TIMER,    LOW);  // D19 OFF
   }
-  // STATE B: DIPPING IN PROGRESS (TAG DETECTED IN BATH)
-  else if (dippingActive) {
-    digitalWrite(PIN_D18_DISCONNECTED, LOW);  // D18 OFF
-    digitalWrite(PIN_D21_HEARTBEAT,    LOW);  // D21 OFF (Heartbeat turns off while dipping!)
-    digitalWrite(PIN_D19_TAG_TIMER,    HIGH); // D19 SOLID ON (Solid glow during dipping!)
-  }
-  // STATE C: DIPPING COMPLETE (LIFTED -> D19 FLASHES 3.5s)
-  else if (dipCompleted && (now < flashCompleteUntil)) {
-    digitalWrite(PIN_D18_DISCONNECTED, LOW);
-    digitalWrite(PIN_D21_HEARTBEAT,    LOW);  // Keep D21 OFF during completion flash
-    if (now - lastBlinkToggle >= 150) {
-      lastBlinkToggle = now;
-      blinkState = !blinkState;
-      digitalWrite(PIN_D19_TAG_TIMER, blinkState ? HIGH : LOW);
-    }
-  }
-  // STATE D: STANDBY / IDLE (NO TAG IN BATH -> HEARTBEAT GLOWS SOLID ON)
+  // STATE B: CONNECTED & HEALTHY (D18 is OFF, D21 Heartbeat is ALWAYS SOLID ON!)
   else {
-    dipCompleted = false;
     digitalWrite(PIN_D18_DISCONNECTED, LOW);  // D18 OFF
-    digitalWrite(PIN_D21_HEARTBEAT,    HIGH); // D21 SOLID ON (Heartbeat glow)
-    digitalWrite(PIN_D19_TAG_TIMER,    LOW);  // D19 OFF
+    digitalWrite(PIN_D21_HEARTBEAT,    HIGH); // D21 SOLID ON (Heartbeat stays ON continuously!)
+
+    // Tag / Dipping LED (D19) Control:
+    if (dippingActive) {
+      // 1. Tag Detected in Bath: D19 SOLID ON
+      digitalWrite(PIN_D19_TAG_TIMER, HIGH);
+    }
+    else if (dipCompleted && (now < flashCompleteUntil)) {
+      // 2. Jig Lifted Out of Bath: D19 flashes rapidly for 3.5s
+      if (now - lastBlinkToggle >= 150) {
+        lastBlinkToggle = now;
+        blinkState = !blinkState;
+        digitalWrite(PIN_D19_TAG_TIMER, blinkState ? HIGH : LOW);
+      }
+    }
+    else {
+      // 3. No Tag Data Available / Standby: D19 OFF
+      dipCompleted = false;
+      digitalWrite(PIN_D19_TAG_TIMER, LOW);
+    }
   }
 
   // Permanent safety: Onboard Blue LED always LOW

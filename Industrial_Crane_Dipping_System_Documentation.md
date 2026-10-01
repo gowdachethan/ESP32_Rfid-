@@ -37,8 +37,8 @@ This system automates:
           [ 1. CRANE LOWERS JIG ]                         [ 2. CRANE LIFTS JIG ]
         Tag detected at tank rim                        Tag detected upon lift
          -> Timer STARTS (T_start)                       -> Timer STOPS (T_stop)
-         -> D21 (Heartbeat) turns OFF                    -> Duration = T_stop - T_start
-         -> D19 (Dipping) turns SOLID ON                 -> D19 flashes 3.5s -> D21 restores ON
+         -> D21 (Heartbeat) STAYS SOLID ON               -> Duration = T_stop - T_start
+         -> D19 (Dipping) turns SOLID ON                 -> D19 flashes 3.5s -> D19 turns OFF
                       │                                               ▲
                       └──────────────► [ CHEMICAL BATH ] ─────────────┘
                                    (Plate Immersion Period)
@@ -53,7 +53,7 @@ stateDiagram-v2
     STANDBY --> DIPPING : Crane Lowers Jig (Tag Read #1)
     note right of DIPPING
       • Dipping Timer Starts (T_start)
-      • D21 (Heartbeat) TURNS OFF
+      • D21 (Heartbeat) STAYS SOLID ON
       • D19 (Tag/Dip) TURNS SOLID ON
       • 4-Second Descent Debounce Active
     end note
@@ -62,6 +62,7 @@ stateDiagram-v2
     note right of COOLDOWN
       • Dipping Timer Stops (T_stop)
       • Immersion Duration Calculated
+      • D21 (Heartbeat) STAYS SOLID ON
       • D19 Flashes Rapidly (3.5s)
       • 4-Second Exit Cooldown: Ignores
         lingering reads while crane moves away
@@ -70,8 +71,8 @@ stateDiagram-v2
     COOLDOWN --> STANDBY : 4 Seconds Passed (Crane Cleared)
     note right of STANDBY
       • Auto-Reset to IDLE!
-      • D21 (Heartbeat) RESTORES SOLID ON
-      • D19 Turns OFF
+      • D21 (Heartbeat) STAYS SOLID ON
+      • D19 Turns OFF (No tag in bath)
       • Ready for Next Jig / Next Tank
     end note
 
