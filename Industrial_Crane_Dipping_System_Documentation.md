@@ -352,7 +352,93 @@ Bench validation was conducted using active hardware:
 
 ---
 
-## 10. Repository & Version Control
+## 10. Industrial Site Deployment: 24V SMPS, Buck Converter & Opto-MOSFET Architecture
+
+For permanent plant deployment, all breadboards, 5mm hobby LEDs, and loose resistors are replaced with rugged DIN-rail industrial automation hardware.
+
+### 10.1 Industrial Bill of Materials (BOM)
+
+| Item | Component | Specification | Function |
+| :--- | :--- | :--- | :--- |
+| **1** | **Main Power** | 24V DC Industrial SMPS (e.g., Mean Well MDR-60-24, 2.5A) | Plant DC power bus |
+| **2** | **Step-Down** | Industrial Buck Converter (24V In $\to$ 5.0V / 3A Out) with screw terminals | Clean 5V power to ESP32 `VIN` |
+| **3** | **Microcontroller** | ESP32-WROOM-32 on Industrial Screw Terminal Breakout Board | Secure ferruled screw-terminal connections |
+| **4** | **Switching Module** | 4-Channel Optocoupler Isolated MOSFET Driver Board (LR7843 / D4184) | Galvanic optical isolation between 3.3V logic & 24V loads |
+| **5** | **Pilot Indicators** | 3× 22mm Industrial Panel Mount 24V DC LEDs (Amber: D21, Green: D19, Red: D18) | Heavy-duty indicators visible across plant |
+| **6** | **Enclosure** | IP66 Weatherproof Polycarbonate Enclosure with transparent door & 22mm knockouts | Acid, fume, and mist ingress protection |
+
+### 10.2 Industrial 24V Schematic & Wiring Map
+
+```text
+       +-----------------------------------------------------------+
+       |                  24V DC Industrial SMPS                   |
+       +-----------------------------+-----------------------------+
+                                     |
+                       +-------------+-------------+
+                       |                           |
+                 (+24V Rail)                  (24V COM / 0V)
+                       |                           |
+             +---------v---------+                 |
+             |   DC-DC BUCK      |                 |
+             | 24V In -> 5V Out  |                 |
+             +----+---------+----+                 |
+           +5V Out|         |GND Out               |
+                  |         |                      |
+           +------v---------v----+                 |
+           |      ESP32 BOARD    |                 |
+           |  VIN           GND  |                 |
+           |  D21    D19    D18  |                 |
+           +---+------+------+---+                 |
+               |      |      |                     |
+         (3.3V Opto-Isolated Logic)                |
+               |      |      |                     |
++--------------v------v------v---------------------v-------------------------------------+
+|        4-CHANNEL OPTOCOUPLER ISOLATED MOSFET DRIVER BOARD                              |
+|   Signal In: D21 (Heartbeat) | D19 (Dipping) | D18 (Fault)                             |
+|   Power In : +24V DC & 24V COM                                                         |
+|   Load Out : Switched 24V Ground to 22mm Pilot Lamps                                   |
++---------+---------------------------+--------------------------+-----------------------+
+          |                           |                          |
+       (-) Yellow                  (-) Green                  (-) Red
+    +-----v-----+               +-----v-----+              +-----v-----+
+    |  AMBER    |               |   GREEN   |              |    RED    |
+    |  22mm LED |               |  22mm LED |              |  22mm LED |
+    | Heartbeat |               |  Dipping  |              | Disconnect|
+    +-----+-----+               +-----+-----+              +-----+-----+
+          | (+)                       | (+)                      | (+)
+          +---------------------------+--------------------------+--- (+24V Common)
+```
+
+### 10.3 Real-Site Placement & Environmental Protection
+
+1. **Control Panel Location**:
+   - Mount the IP66 enclosure on a structural column **2.5 to 3.5 meters** from the tank edge to avoid direct chemical splashing.
+   - Enclosure height: **1.6 meters** above the floor (eye level for supervisor and crane operator).
+   - Use **PG9 / PG11 cable glands** mounted strictly on the bottom of the enclosure.
+
+2. **UHF RFID Reader & Antenna Orientation**:
+   - Secure the SLD1010 circular polarized antenna on an unmovable steel mast angled **30° downward** toward the crane entry path.
+   - Attach an **Anti-Metal IP68 UHF Tag** (e.g., Confidex Ironside) to the crane suspension arm above the liquid chemical line.
+
+---
+
+## 11. Prompts for AI Image Generation
+
+Use these prompts in Midjourney, DALL-E 3, or Flux to produce presentation-ready concept visuals:
+
+### Prompt 1: Industrial Control Panel & Internal Wiring (CAD Style)
+```text
+High-resolution photo of an open industrial automation electrical control panel, IP66 fiberglass enclosure with transparent door opened, mounted on a 35mm DIN rail inside. Inside the panel contains: a compact Mean Well 24V DC power supply, an industrial buck converter step-down module with screw terminals, an ESP32 microcontroller mounted on an industrial screw terminal adapter board with neat status LEDs, and a 4-channel optocoupler isolated MOSFET driver module with terminal blocks. Extremely neat industrial panel wiring with slotted wire ducts (Panduit), blue and red ferruled wires neatly routed, labeled terminal blocks UK2.5B. On the front enclosure door are three 22mm industrial LED pilot lights glowing: Amber labeled 'HEARTBEAT', Green labeled 'DIPPING', and Red labeled 'FAULT'. Clean electrical engineering aesthetic, macro depth of field, realistic studio lighting, sharp focus, 8k resolution.
+```
+
+### Prompt 2: Real-World Factory Crane & Chemical Bath Deployment
+```text
+Wide-angle cinematic documentary photograph inside a modern hot-dip galvanizing and metal chemical treatment factory. In the foreground, an overhead heavy-duty yellow gantry crane is lowering a large steel jig carrying hung metal structural plates into an industrial chemical bath tank. Bolted onto the crane arm is a rugged IP68 industrial anti-metal UHF RFID tag. Mounted on a nearby yellow safety stanchion beside the tank is a rugged white circular-polarized RFID panel antenna pointed at the crane. Attached to a structural pillar is an industrial IP66 control box with three bright 22mm pilot indicators, with the Green 'DIPPING' lamp illuminated brilliantly, indicating active immersion timing. Industrial safety yellow floor markings, chemical mist vapor rising slightly, atmospheric volumetric lighting, hyper-realistic, photorealistic industrial scene.
+```
+
+---
+
+## 12. Repository & Version Control
 
 All source code, batch scripts, Arduino firmware, and schematics are under active version control on GitHub:
 - **Repository URL**: `https://github.com/gowdachethan/ESP32_Rfid-`

@@ -91,7 +91,7 @@ sequenceDiagram
    ```
 3. Open the **Web Dashboard** in your browser:
    - Local: `http://localhost:5000`
-   - Network: `http://192.168.0.54:5000`
+   - Network: `http://192.168.0.118:5000`
 
 ### 2. ESP32 Controller Setup
 
@@ -101,7 +101,7 @@ sequenceDiagram
    ```cpp
    const char* ssid     = "Simpel_Ai_2nd";
    const char* password = "Simpel@26";
-   const char* laptop_ip   = "192.168.0.54";
+   const char* laptop_ip   = "192.168.0.118"; // Laptop Wi-Fi IP
    ```
 4. Click **Upload**.
 5. At boot, the ESP32 performs an automatic sequential LED self-test (`D21` $\rightarrow$ `D19` $\rightarrow$ `D18`), connects to Wi-Fi, and turns `D21` **SOLID ON** once heartbeats are detected.
