@@ -66,12 +66,8 @@ Automated industrial dipping bath immersion timing, tracking, and ruggedized pil
 ├── run_laptop_sync_server.bat              # 1-Click launcher script for Windows
 ├── requirements.txt                        # Python dependencies
 ├── SLD1010_ESP32_Integration_Test_Report.md# Full engineering test & validation report
-├── ESP32_Follow_Server_LED/
-│   └── ESP32_Follow_Server_LED.ino         # [CURRENT EXPERIMENT] Industrial 2-LED Status Controller (D25 Blue, D33 Green)
 ├── ESP32_Firmware/
-│   └── ESP32_Follow_Server_LED.ino         # Main synchronized industrial firmware sketch
-├── ESP32_3LED_Test_Bench/
-│   └── ESP32_3LED_Test_Bench.ino           # [REFERENCE] Prototype 3-LED Dipping Simulation (D21, D19, D18)
+│   └── ESP32_Firmware.ino                  # Industrial 2-LED Status Controller (D25 Blue, D33 Green)
 └── README.md                               # Comprehensive engineering documentation
 ```
 
@@ -90,7 +86,7 @@ Automated industrial dipping bath immersion timing, tracking, and ruggedized pil
    - Network: `http://192.168.0.118:5000`
 
 ### 2. Flash the ESP32 Controller
-1. Open [ESP32_Follow_Server_LED/ESP32_Follow_Server_LED.ino](file:///C:/Users/rchet/.gemini/antigravity-ide/scratch/SLD1010_Crane_Dipping_System/ESP32_Follow_Server_LED/ESP32_Follow_Server_LED.ino) in Arduino IDE.
+1. Open [ESP32_Firmware/ESP32_Firmware.ino](file:///C:/Users/rchet/.gemini/antigravity-ide/scratch/SLD1010_Crane_Dipping_System/ESP32_Firmware/ESP32_Firmware.ino) in Arduino IDE.
 2. Select Board: **ESP32 Dev Module**.
 3. Verify Wi-Fi credentials and static laptop IP:
    ```cpp
