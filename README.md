@@ -1,64 +1,61 @@
-# SLD1010 Industrial RFID Crane Dipping Jig Automation System
+# Industrial Chemical Bath Crane Immersion Dipping & RFID Process Tracking System
 
-Automated industrial dipping bath immersion timing, tracking, and 3-LED pilot light indicator system using **SLD1010 (SIM7100) UHF RFID Reader** and **ESP32-WROOM-32**.
+Automated industrial dipping bath immersion timing, tracking, and ruggedized pilot light status system using the **Silion SLD1010 (SIM7100) UHF RFID Reader** and **ESP32-WROOM-32 Controller**.
 
 ---
 
-## 🏭 System Architecture
+## 🏭 Industrial System Architecture
 
 ```
-                                  [ 24V DC Industrial SMPS ]
+                                  [ 12V DC Industrial SMPS ]
                                      │                    │
-                      ┌──────────────┴──────────────┐     │ (24V Power Bus)
-                      │ 24V to 5V DC-DC Buck Conv.  │     │
-                      └──────────────┬──────────────┘     │
-                                     ▼ (5.0V)             │
-                               [ ESP32 VIN & GND ]        │
-                                     │                    ▼
-                            (3.3V GPIO Outputs)   [ Isolated MOSFET / Relay ]
-  Heartbeat Active (<=20s) ──► GPIO 21 ───────────► Ch 1 ──► 🔴 D21 (Top: Heartbeat Solid ON)
-  Dipping In Progress      ──► GPIO 19 ───────────► Ch 2 ──► 🔴 D19 (Middle: Dipping Solid ON)
-  Fault / Disconnected     ──► GPIO 18 ───────────► Ch 3 ──► 🔴 D18 (Bottom: Fault Solid ON)
+                      ┌──────────────┴──────────────┐     ├──────────────────────────┐
+                      │ 12V to 5V DC-DC Buck Conv.  │     │ (+12V DC Power Bus)      │
+                      └──────────────┬──────────────┘     ▼                          ▼
+                                     ▼ (5.0V)      [ MOSFET VIN & GND ]    🟡 Yellow Pilot Light
+                               [ ESP32 VIN & GND ]        │                (Hardwired Power ON)
+                                     │                    │
+                            (3.3V GPIO Signals)   (High-Side Switched)
+   Wi-Fi & RFID Link Active ──► GPIO 25 ───────────► Ch 2 ──► 🔵 Blue Pilot Light  (Wi-Fi & RFID Link)
+   Laptop Server Running    ──► GPIO 33 ───────────► Ch 3 ──► 🟢 Green Pilot Light (Server Running Status)
 ```
 
 ---
 
-## 📌 Industrial 3-LED Indicator Truth Table
+## 📌 Industrial Pilot Light Status Matrix
 
-| Physical Station State | D21 (Row 20 - Top LED) | D19 (Row 25 - Middle LED) | D18 (Row 30 - Bottom LED) |
-| :--- | :---: | :---: | :---: |
-| **Standby / Ready (No Tag in Bath)** | 🔴 **SOLID ON** | ❌ OFF | ❌ OFF |
-| **Dipping in Progress (Plates in Bath)** | ❌ **TURNS OFF** | 🔴 **SOLID ON** | ❌ OFF |
-| **Dipping Complete (Crane Lifted Jig)** | ❌ OFF | ⚡ **FLASHES (3.5s)** $\rightarrow$ OFF | ❌ OFF |
-| **Back to Standby (After Lift)** | 🔴 **TURNS BACK ON** | ❌ OFF | ❌ OFF |
-| **Reader Disconnected / Offline (>20s)** | ❌ OFF | ❌ OFF | 🔴 **SOLID ON** |
+| Indicator | Color | Controlled By | Operational Behavior |
+| :--- | :---: | :---: | :--- |
+| **Device Power** | 🟡 **Yellow** | **Hardwired directly to 12V SMPS (+12V & GND)** | **SOLID ON** immediately upon turning ON main system power. Hardwired (no ESP32 code/pin needed). |
+| **Wi-Fi & RFID Link** | 🔵 **Blue** | **ESP32 Pin `D25` (via MOSFET Ch 2)** | **SOLID ON** when connected to Wi-Fi (`Simpel_Ai_2nd`) **AND** SLD1010 RFID reader is online.<br>❌ **OFF** immediately if Wi-Fi disconnects OR if SLD1010 reader is disconnected. |
+| **Server Status** | 🟢 **Green** | **ESP32 Pin `D33` (via MOSFET Ch 3)** | **SOLID ON** when Laptop Server is running & responding (`HTTP 200`).<br>❌ **OFF** immediately (< 1s) if laptop server is stopped, crashes, or if Wi-Fi disconnects. |
+| **On-board LED** | ⚪ **Internal** | **ESP32 Pin `D2`** | **Permanently DISABLED (LOW)** to prevent false operator signals. |
+
+### System Truth Table
+
+| Wi-Fi Network | SLD1010 RFID Reader | Laptop Server (:5000) | 🟡 Yellow (Power) | 🔵 Blue (`D25`) | 🟢 Green (`D33`) |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| ❌ **OFF / Disconnected** | Any | Any | 🟡 **ON** | ❌ **OFF (Instant)** | ❌ **OFF (Instant)** |
+| ✅ **Connected** | ❌ **OFFLINE** | ✅ **Running** | 🟡 **ON** | ❌ **OFF** | 🟢 **SOLID ON** |
+| ✅ **Connected** | ✅ **Online** | ❌ **STOPPED** | 🟡 **ON** | 🔵 **SOLID ON** | ❌ **OFF (< 1s)** |
+| ✅ **Connected** | ✅ **Online** | ✅ **Running** | 🟡 **ON** | 🔵 **SOLID ON** | 🟢 **SOLID ON** |
 
 ---
 
-## 🔄 Crane Dipping Process Sequence
+## ⚡ Hardware & Wiring Specifications
 
-```mermaid
-sequenceDiagram
-    participant Crane as Crane & Jig
-    participant RFID as SLD1010 Reader
-    participant Server as Python Server (:5000)
-    participant ESP32 as ESP32 Controller
-
-    Note over Server,ESP32: Standby State: D21 is SOLID ON (Heartbeats arriving)
-    Crane->>RFID: 1. Lowers Jig into chemical bath (Tag detected)
-    RFID->>Server: HTTP POST (Tag 31623039 detected)
-    Server->>Server: Start Dipping Timer (T_start)
-    Server-->>ESP32: UDP Broadcast DIP_START
-    Note over ESP32: D21 turns OFF, D19 turns SOLID ON!
-    Note over Crane,Server: Immersion Period: Stopwatch counts live on web dashboard
-    Crane->>RFID: 2. Lifts Jig out of bath (Tag detected 2nd time)
-    RFID->>Server: HTTP POST (Tag detected upon lift)
-    Server->>Server: Stop Timer & Calculate Duration (e.g., 01:26.84)
-    Server-->>ESP32: UDP Broadcast DIP_STOP
-    Note over ESP32: D19 flashes for 3.5s (Cycle Complete!), then D21 restores to SOLID ON!
-    Server->>Server: 4-Second Exit Cooldown (ignores exit jitter) -> Auto-reset to IDLE
-    Note over Server,ESP32: Ready for Next Jig / Next Tank Cycle!
-```
+1. **Power Supply**: 230V AC $\rightarrow$ 12V DC (2A) Industrial SMPS.
+2. **Controller Voltage**: Step-down via LM2596/MP1584 Buck Converter (12V $\rightarrow$ 5.0V DC) wired directly to ESP32 `VIN` and `GND`.
+3. **Mounting**: Industrial ESP32 Screw Terminal Breakout Board (eliminating breadboards and loose jumper wires).
+4. **Indicators**: 12V Industrial Panel-Mount Pilot Lights driven via an Opto-isolated 4-Channel MOSFET Driver Module:
+   - **MOSFET High-Voltage Input**: `VIN` & `GND` screw terminals connected to the 12V SMPS power bus.
+   - **MOSFET Signal Inputs**:
+     - `SIG 2` $\leftarrow$ ESP32 Pin **`D25`**
+     - `SIG 3` $\leftarrow$ ESP32 Pin **`D33`**
+     - `GND`   $\leftarrow$ Common ESP32 Ground
+5. **Fail-Safe Mechanism**:
+   - `WiFi.onEvent(WiFiEvent)` listening to `ARDUINO_EVENT_WIFI_STA_DISCONNECTED` forces both Blue and Green LEDs LOW immediately (0ms delay).
+   - Server poll watchdog detects server stoppage within 2 consecutive failed polls (~1s) and cuts the Green LED.
 
 ---
 
@@ -70,50 +67,40 @@ sequenceDiagram
 ├── requirements.txt                        # Python dependencies
 ├── SLD1010_ESP32_Integration_Test_Report.md# Full engineering test & validation report
 ├── ESP32_Follow_Server_LED/
-│   └── ESP32_Follow_Server_LED.ino         # [PRODUCTION] 2-LED Industrial Status Controller (D25 Blue Wi-Fi, D33 Green Server)
+│   └── ESP32_Follow_Server_LED.ino         # [CURRENT EXPERIMENT] Industrial 2-LED Status Controller (D25 Blue, D33 Green)
 ├── ESP32_Firmware/
-│   └── ESP32_Follow_Server_LED.ino         # [TESTING / REFERENCE] 3-LED Prototype Dipping Simulation (D21, D19, D18)
-└── README.md                               # Documentation
+│   └── ESP32_Follow_Server_LED.ino         # Main synchronized industrial firmware sketch
+├── ESP32_3LED_Test_Bench/
+│   └── ESP32_3LED_Test_Bench.ino           # [REFERENCE] Prototype 3-LED Dipping Simulation (D21, D19, D18)
+└── README.md                               # Comprehensive engineering documentation
 ```
 
 ---
 
 ## 🚀 Quickstart Guide
 
-### 1. Python Sync Server (Host Laptop)
-
+### 1. Run the Laptop Sync Server
 1. Connect the host laptop to Wi-Fi (`Simpel_Ai_2nd`) and enable Mobile Hotspot (`192.168.137.1`).
-2. Run the server using the batch script:
-   ```cmd
-   run_laptop_sync_server.bat
-   ```
-   *Or via terminal:*
-   ```bash
+2. Start the server via double-clicking `run_laptop_sync_server.bat` or run:
+   ```powershell
    python laptop_rfid_sync_server.py
    ```
-3. Open the **Web Dashboard** in your browser:
+3. Web Dashboard is available at:
    - Local: `http://localhost:5000`
    - Network: `http://192.168.0.118:5000`
 
-### 2. ESP32 Controller Setup
-
-#### A) Production Industrial Deployment (2-LED System):
-1. Open `ESP32_Follow_Server_LED/ESP32_Follow_Server_LED.ino` in Arduino IDE.
-2. Select Board: `ESP32 Dev Module`.
-3. Verify Wi-Fi credentials & static laptop server IP:
+### 2. Flash the ESP32 Controller
+1. Open [ESP32_Follow_Server_LED/ESP32_Follow_Server_LED.ino](file:///C:/Users/rchet/.gemini/antigravity-ide/scratch/SLD1010_Crane_Dipping_System/ESP32_Follow_Server_LED/ESP32_Follow_Server_LED.ino) in Arduino IDE.
+2. Select Board: **ESP32 Dev Module**.
+3. Verify Wi-Fi credentials and static laptop IP:
    ```cpp
    const char* ssid        = "Simpel_Ai_2nd";
    const char* password    = "Simpel@26";
    const char* laptop_ip   = "192.168.0.118";
+   const int   laptop_port = 5000;
    ```
 4. Click **Upload**.
-5. **Logic:**
-   - 🟡 **Yellow LED:** Hardwired direct to 12V SMPS (Device Power ON).
-   - 🔵 **Blue LED (D25):** SOLID ON when connected to Wi-Fi. Turns OFF immediately if Wi-Fi drops.
-   - 🟢 **Green LED (D33):** SOLID ON when laptop server is actively running (`HTTP 200`). Turns OFF immediately (< 1s) if server stops or Wi-Fi drops.
-
-#### B) Prototype Dipping Simulation (3-LED Test Bench - Reference Only):
-- Open `ESP32_Firmware/ESP32_Follow_Server_LED.ino` for the previous mutually-exclusive 3-LED dipping test bench (`D21` Heartbeat, `D19` Dipping Active / Flashing Complete, `D18` Disconnected Fault).
+5. During boot, the ESP32 runs a sequential self-test (Blue $\rightarrow$ Green $\rightarrow$ Both), connects to Wi-Fi, and reflects live system health.
 
 ---
 
@@ -126,11 +113,3 @@ sequenceDiagram
 | `/api/simulate_dip?action=stop` | `GET/POST` | Manually triggers dipping stop / lift (for testing). |
 | `/api/simulate_dip?action=reset` | `GET/POST` | Resets dipping cycle to IDLE. |
 | `/api/heartbeat_status` | `GET` | Heartbeat health and elapsed time check. |
-
----
-
-## ⚙️ Hardware Specifications
-- **Controller**: ESP32-WROOM-32 (240 MHz Dual-Core, 520 KB SRAM).
-- **RFID Reader**: Silion SLD1010 / SIM7100 UHF RFID Reader (865–868 MHz / 902–928 MHz).
-- **Power**: 24V DC Industrial SMPS with LM2596/MP1584 Buck Converter stepped down to 5.0V DC.
-- **Output Drivers**: 4-Channel Optocoupled MOSFET Module (switching 24V industrial panel pilot lights).

@@ -1,6 +1,6 @@
 /*
  * =================================================================================
- * INDUSTRIAL CRANE DIPPING SYSTEM - 2-LED STATUS CONTROLLER (V2.6)
+ * INDUSTRIAL CRANE DIPPING SYSTEM - 2-LED STATUS CONTROLLER (V2.5)
  * =================================================================================
  * HARDWARE SETUP:
  *  - ESP32 Screw Terminal Breakout Board
@@ -8,15 +8,16 @@
  *  - Direct 12V Yellow Pilot Light (Hardwired to 12V bus, no ESP32 pin needed)
  *
  * LED LOGIC:
- *  1. 🔵 BLUE LED  (Pin D25 via MOSFET Ch 2) : Wi-Fi Connection Status
- *     - SOLID ON : Connected to Wi-Fi (Simpel_Ai_2nd).
- *     - OFF      : Wi-Fi disconnected or lost.
+ *  1. 🔵 BLUE LED  (Pin D25 via MOSFET Ch 2):
+ *     - SOLID ON : Wi-Fi is connected AND SLD1010 RFID Reader is online.
+ *     - OFF      : Wi-Fi disconnected OR SLD1010 RFID Reader disconnected.
  *
- *  2. 🟢 GREEN LED (Pin D33 via MOSFET Ch 3) : Server Running Status
+ *  2. 🟢 GREEN LED (Pin D33 via MOSFET Ch 3):
  *     - SOLID ON : Wi-Fi is connected AND Laptop Server is RUNNING (HTTP 200).
- *     - OFF      : Laptop Server is stopped/offline OR Wi-Fi is disconnected (< 1s).
+ *     - OFF      : Wi-Fi disconnected OR Server STOPPED/CRASHED (immediate < 1s).
  *
- *  3. On-board LED (Pin D2)                  : Permanently DISABLED (LOW).
+ *  3. On-board LED (Pin D2):
+ *     - Permanently DISABLED (LOW).
  * =================================================================================
  */
 
@@ -33,7 +34,7 @@ const char* laptop_ip   = "192.168.0.118";
 const int   laptop_port = 5000;
 
 // ====== 2 INDUSTRIAL OUTPUT PINS ======
-#define PIN_LED_BLUE     25  // 🔵 Blue LED:  Wi-Fi Connection Status (Screw Terminal 25)
+#define PIN_LED_BLUE     25  // 🔵 Blue LED:  Wi-Fi & RFID Reader Link (Screw Terminal 25)
 #define PIN_LED_GREEN    33  // 🟢 Green LED: Server Running Status (Screw Terminal 33)
 #define PIN_BOARD_LED     2  // On-board Blue LED (Permanently OFF)
 
@@ -51,15 +52,17 @@ const unsigned long SERVER_TIMEOUT_MS = 2000; // If server silent > 2s, mark OFF
 
 bool isWifiConnected = false;
 bool serverAlive = false;
+bool readerAlive = false;
 int failedPollCount = 0;
 
 // Hardware Wi-Fi Event Callback for INSTANT disconnect detection (0ms delay)
 void WiFiEvent(WiFiEvent_t event) {
   switch (event) {
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      Serial.println("\n[!] Wi-Fi DISCONNECTED! Both Blue and Green LEDs OFF immediately.");
+      Serial.println("\n[!] Wi-Fi DISCONNECTED! Shutting down all LEDs immediately.");
       isWifiConnected = false;
       serverAlive = false;
+      readerAlive = false;
       digitalWrite(PIN_LED_BLUE,  LOW);
       digitalWrite(PIN_LED_GREEN, LOW);
       WiFi.reconnect();
@@ -69,7 +72,6 @@ void WiFiEvent(WiFiEvent_t event) {
       Serial.print("\n[+] Wi-Fi CONNECTED! IP: ");
       Serial.println(WiFi.localIP());
       isWifiConnected = true;
-      digitalWrite(PIN_LED_BLUE, HIGH); // 🔵 Blue LED turns ON immediately on connection!
       break;
 
     default:
@@ -92,8 +94,8 @@ void setup() {
   digitalWrite(PIN_BOARD_LED, LOW);
 
   Serial.println("\n\n========================================================");
-  Serial.println("  ESP32 INDUSTRIAL CRANE CONTROLLER (V2.6)              ");
-  Serial.println("  🔵 Blue LED  (Pin D25) -> Wi-Fi Connected Status      ");
+  Serial.println("  ESP32 INDUSTRIAL CRANE CONTROLLER (V2.5)              ");
+  Serial.println("  🔵 Blue LED  (Pin D25) -> Wi-Fi + RFID Reader Link    ");
   Serial.println("  🟢 Green LED (Pin D33) -> Laptop Server Running ONLY  ");
   Serial.println("========================================================");
 
@@ -131,13 +133,11 @@ void setup() {
 
   if (WiFi.status() == WL_CONNECTED) {
     isWifiConnected = true;
-    digitalWrite(PIN_LED_BLUE, HIGH); // 🔵 Blue LED turns ON immediately!
     Serial.println("\n[+] Wi-Fi Connected!");
     Serial.print("[*] ESP32 IP: http://");
     Serial.println(WiFi.localIP());
   } else {
     isWifiConnected = false;
-    digitalWrite(PIN_LED_BLUE, LOW);
     Serial.println("\n[!] Wi-Fi Connection Timeout. Will retry in loop...");
   }
 
@@ -150,18 +150,17 @@ void loop() {
   unsigned long now = millis();
 
   // -------------------------------------------------------------
-  // 1. WI-FI STATUS CHECK & 🔵 BLUE LED ACTUATION
+  // 1. WI-FI STATUS CHECK
   // -------------------------------------------------------------
   isWifiConnected = (WiFi.status() == WL_CONNECTED);
 
-  // 🔵 Blue LED: SOLID ON when connected to Wi-Fi, OFF if disconnected
-  digitalWrite(PIN_LED_BLUE, isWifiConnected ? HIGH : LOW);
-
   // CRITICAL RULE: If Wi-Fi is disconnected, SERVER IS UNREACHABLE!
-  // Force 🟢 Green LED OFF immediately too.
+  // BOTH Blue and Green LEDs MUST be forced OFF immediately (0ms delay).
   if (!isWifiConnected) {
+    digitalWrite(PIN_LED_BLUE,  LOW);
     digitalWrite(PIN_LED_GREEN, LOW);
     serverAlive = false;
+    readerAlive = false;
     failedPollCount = 0;
     delay(50); // Yield to background tasks
     return;    // Do not attempt network calls when Wi-Fi is down
@@ -178,6 +177,12 @@ void loop() {
     serverAlive = true;
     lastServerResponseTime = now;
     failedPollCount = 0;
+
+    if (strncmp(incomingPacket, "HB:1", 4) == 0) {
+      readerAlive = true;
+    } else if (strncmp(incomingPacket, "HB:0", 4) == 0) {
+      readerAlive = false;
+    }
   }
 
   // -------------------------------------------------------------
@@ -193,9 +198,17 @@ void loop() {
     int httpCode = http.GET();
 
     if (httpCode == 200) {
+      String payload = http.getString();
       serverAlive = true;
       lastServerResponseTime = now;
       failedPollCount = 0;
+
+      // Extract reader_alive from JSON payload
+      if (payload.indexOf("\"reader_alive\":true") != -1 || payload.indexOf("\"reader_alive\": true") != -1) {
+        readerAlive = true;
+      } else {
+        readerAlive = false;
+      }
     } else {
       // Server returned error, connection refused (server stopped), or timed out
       failedPollCount++;
@@ -216,10 +229,17 @@ void loop() {
   }
 
   // -------------------------------------------------------------
-  // 5. 🟢 GREEN LED ACTUATION: SERVER RUNNING ONLY
+  // 5. LED STATUS ACTUATION
   // -------------------------------------------------------------
-  // - SOLID ON ONLY when Wi-Fi is connected AND Server is running
-  // - OFF immediately if Server is stopped (< 1s) OR Wi-Fi drops
+  // 🔵 Blue LED: Wi-Fi Connected AND RFID Reader Connected
+  // - Turns OFF immediately if Wi-Fi drops OR RFID reader disconnects
+  // - Turns SOLID ON when Wi-Fi is connected AND reader is alive
+  bool blueState = isWifiConnected && readerAlive;
+  digitalWrite(PIN_LED_BLUE, blueState ? HIGH : LOW);
+
+  // 🟢 Green LED: Server Running Status ONLY
+  // - Turns OFF immediately if Wi-Fi drops OR Server stops (< 1s)
+  // - Turns SOLID ON ONLY when Wi-Fi is connected AND Server is running
   bool greenState = isWifiConnected && serverAlive;
   digitalWrite(PIN_LED_GREEN, greenState ? HIGH : LOW);
 

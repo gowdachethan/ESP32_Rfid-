@@ -1,29 +1,23 @@
 /*
  * =================================================================================
- * ESP32 INDUSTRIAL 3-LED CONTROLLER
+ * INDUSTRIAL CRANE DIPPING SYSTEM - 2-LED STATUS CONTROLLER (V2.5)
  * =================================================================================
- * EXACT LOGIC:
- *  1. STANDBY / IDLE (No tag in bath):
- *     - D21 (Heartbeat)    : SOLID ON (GLOWS) while heartbeats arrive (<= 20s).
- *     - D19 (Tag / Dip)    : OFF (No tag data available).
- *     - D18 (Disconnected): OFF.
+ * HARDWARE SETUP:
+ *  - ESP32 Screw Terminal Breakout Board
+ *  - 12V Industrial LED Indicators via Opto-isolated MOSFET Board
+ *  - Direct 12V Yellow Pilot Light (Hardwired to 12V bus, no ESP32 pin needed)
  *
- *  2. DIPPING IN PROGRESS (Crane lowers jig into bath -> Tag detected):
- *     - D21 (Heartbeat)    : STAYS SOLID ON! (Heartbeat indicator remains glowing while dipping)
- *     - D19 (Tag / Dip)    : SOLID ON (GLOWS)! (Dipping active timer running)
- *     - D18 (Disconnected): OFF.
+ * LED LOGIC:
+ *  1. 🔵 BLUE LED  (Pin D25 via MOSFET Ch 2):
+ *     - SOLID ON : Wi-Fi is connected AND SLD1010 RFID Reader is online.
+ *     - OFF      : Wi-Fi disconnected OR SLD1010 RFID Reader disconnected.
  *
- *  3. DIPPING COMPLETE (Crane lifts jig out of bath -> Tag detected 2nd time):
- *     - D21 (Heartbeat)    : STAYS SOLID ON!
- *     - D19 (Tag / Dip)    : Flashes rapidly for 3.5s (Dipping Complete signal), then turns OFF!
- *     - D18 (Disconnected): OFF.
+ *  2. 🟢 GREEN LED (Pin D33 via MOSFET Ch 3):
+ *     - SOLID ON : Wi-Fi is connected AND Laptop Server is RUNNING (HTTP 200).
+ *     - OFF      : Wi-Fi disconnected OR Server STOPPED/CRASHED (immediate < 1s).
  *
- *  4. DISCONNECTED / FAULT (> 20s timeout or Wi-Fi lost):
- *     - D18 (Disconnected): SOLID ON (Alerting operator).
- *     - D21 (Heartbeat)    : OFF.
- *     - D19 (Tag / Dip)    : OFF.
- *
- *  5. D2 (On-board Blue)   : Permanently DISABLED (LOW).
+ *  3. On-board LED (Pin D2):
+ *     - Permanently DISABLED (LOW).
  * =================================================================================
  */
 
@@ -35,239 +29,220 @@
 const char* ssid     = "Simpel_Ai_2nd";
 const char* password = "Simpel@26";
 
-// ====== LAPTOP SERVER IP ======
-// Note: Set this to your laptop's current Wi-Fi IP (192.168.0.118) or Hotspot IP (192.168.137.1)
+// ====== LAPTOP SERVER IP (STATIC IP) ======
 const char* laptop_ip   = "192.168.0.118"; 
 const int   laptop_port = 5000;
 
-// ====== 3 INDUSTRIAL PINS ======
-#define PIN_D21_HEARTBEAT     21  // D21: Heartbeat Solid ON during Standby
-#define PIN_D19_TAG_TIMER     19  // D19: Dipping Active Solid ON / Complete Flash
-#define PIN_D18_DISCONNECTED  18  // D18: Disconnected Fault Solid ON
-#define PIN_BOARD_LED          2  // On-board Blue LED (Permanently OFF)
+// ====== 2 INDUSTRIAL OUTPUT PINS ======
+#define PIN_LED_BLUE     25  // 🔵 Blue LED:  Wi-Fi & RFID Reader Link (Screw Terminal 25)
+#define PIN_LED_GREEN    33  // 🟢 Green LED: Server Running Status (Screw Terminal 33)
+#define PIN_BOARD_LED     2  // On-board Blue LED (Permanently OFF)
 
 // ====== UDP SETTINGS ======
 const int UDP_PORT = 4210;
 WiFiUDP udp;
 char incomingPacket[256];
 
-// ====== PROCESS TIMING & WATCHDOG ======
+// ====== TIMING & WATCHDOG ======
 unsigned long lastPollTime = 0;
 const unsigned long POLL_INTERVAL_MS = 500;  // Poll server every 500ms
-unsigned long lastServerContactTime = 0;
-const unsigned long SERVER_LOST_TIMEOUT_MS = 6000; // 6s watchdog
 
-bool readerAlive    = false;
-bool dippingActive  = false;
-bool dipCompleted   = false;
+unsigned long lastServerResponseTime = 0;
+const unsigned long SERVER_TIMEOUT_MS = 2000; // If server silent > 2s, mark OFF!
 
-unsigned long flashCompleteUntil = 0;
-unsigned long lastBlinkToggle = 0;
-bool blinkState = false;
+bool isWifiConnected = false;
+bool serverAlive = false;
+bool readerAlive = false;
+int failedPollCount = 0;
 
-void triggerDipStart() {
-  dippingActive = true;
-  dipCompleted = false;
-  flashCompleteUntil = 0;
-  Serial.println(">>> [EVENT] JIG DIPPING STARTED! D21 (HB) OFF -> D19 (DIP) SOLID ON! <<<");
-}
+// Hardware Wi-Fi Event Callback for INSTANT disconnect detection (0ms delay)
+void WiFiEvent(WiFiEvent_t event) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.println("\n[!] Wi-Fi DISCONNECTED! Shutting down all LEDs immediately.");
+      isWifiConnected = false;
+      serverAlive = false;
+      readerAlive = false;
+      digitalWrite(PIN_LED_BLUE,  LOW);
+      digitalWrite(PIN_LED_GREEN, LOW);
+      WiFi.reconnect();
+      break;
 
-void triggerDipComplete() {
-  dippingActive = false;
-  dipCompleted = true;
-  flashCompleteUntil = millis() + 3500; // Flash D19 for 3.5 seconds
-  Serial.println(">>> [EVENT] JIG DIPPING COMPLETE! D19 FLASHING -> THEN D21 (HB) RESTORES SOLID ON! <<<");
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      Serial.print("\n[+] Wi-Fi CONNECTED! IP: ");
+      Serial.println(WiFi.localIP());
+      isWifiConnected = true;
+      break;
+
+    default:
+      break;
+  }
 }
 
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  // Initialize Pins
-  pinMode(PIN_D21_HEARTBEAT,    OUTPUT);
-  pinMode(PIN_D19_TAG_TIMER,    OUTPUT);
-  pinMode(PIN_D18_DISCONNECTED, OUTPUT);
-  pinMode(PIN_BOARD_LED,         OUTPUT);
+  // Configure Output Pins
+  pinMode(PIN_LED_BLUE,  OUTPUT);
+  pinMode(PIN_LED_GREEN, OUTPUT);
+  pinMode(PIN_BOARD_LED, OUTPUT);
 
-  digitalWrite(PIN_D21_HEARTBEAT,    LOW);
-  digitalWrite(PIN_D19_TAG_TIMER,    LOW);
-  digitalWrite(PIN_D18_DISCONNECTED, LOW);
-  digitalWrite(PIN_BOARD_LED,         LOW);
+  // Initial State: All OFF immediately
+  digitalWrite(PIN_LED_BLUE,  LOW);
+  digitalWrite(PIN_LED_GREEN, LOW);
+  digitalWrite(PIN_BOARD_LED, LOW);
 
   Serial.println("\n\n========================================================");
-  Serial.println("  ESP32 3-LED CONTROLLER (MUTUALLY EXCLUSIVE INDICATOR) ");
-  Serial.println("  Standby (No Tag)  -> D21 SOLID ON                     ");
-  Serial.println("  Dipping In Bath   -> D21 OFF, D19 SOLID ON            ");
-  Serial.println("  Dipping Complete  -> D19 Flash (3.5s) -> D21 SOLID ON ");
-  Serial.println("  Disconnected      -> D18 SOLID ON                     ");
+  Serial.println("  ESP32 INDUSTRIAL CRANE CONTROLLER (V2.5)              ");
+  Serial.println("  🔵 Blue LED  (Pin D25) -> Wi-Fi + RFID Reader Link    ");
+  Serial.println("  🟢 Green LED (Pin D33) -> Laptop Server Running ONLY  ");
   Serial.println("========================================================");
 
   // -------------------------------------------------------------
-  // HARDWARE SELF-TEST: LIGHT EACH LED IN SEQUENCE AT BOOT
+  // BOOT SELF-TEST: FLASH BOTH LEDS AT STARTUP
   // -------------------------------------------------------------
-  Serial.println("[*] Self-Test 1: D21 (Heartbeat LED)...");
-  digitalWrite(PIN_D21_HEARTBEAT, HIGH);
-  delay(400);
-  digitalWrite(PIN_D21_HEARTBEAT, LOW);
+  Serial.println("[*] Self-Test: 🔵 Blue LED (Pin D25)...");
+  digitalWrite(PIN_LED_BLUE, HIGH); delay(350); digitalWrite(PIN_LED_BLUE, LOW);
 
-  Serial.println("[*] Self-Test 2: D19 (Tag / Dip LED)...");
-  digitalWrite(PIN_D19_TAG_TIMER, HIGH);
-  delay(400);
-  digitalWrite(PIN_D19_TAG_TIMER, LOW);
+  Serial.println("[*] Self-Test: 🟢 Green LED (Pin D33)...");
+  digitalWrite(PIN_LED_GREEN, HIGH); delay(350); digitalWrite(PIN_LED_GREEN, LOW);
 
-  Serial.println("[*] Self-Test 3: D18 (Disconnected Fault LED)...");
-  digitalWrite(PIN_D18_DISCONNECTED, HIGH);
+  digitalWrite(PIN_LED_BLUE,  HIGH);
+  digitalWrite(PIN_LED_GREEN, HIGH);
   delay(400);
-  digitalWrite(PIN_D18_DISCONNECTED, LOW);
-
-  // Flash all 3 together
-  digitalWrite(PIN_D21_HEARTBEAT,    HIGH);
-  digitalWrite(PIN_D19_TAG_TIMER,    HIGH);
-  digitalWrite(PIN_D18_DISCONNECTED, HIGH);
-  delay(500);
-  digitalWrite(PIN_D21_HEARTBEAT,    LOW);
-  digitalWrite(PIN_D19_TAG_TIMER,    LOW);
-  digitalWrite(PIN_D18_DISCONNECTED, LOW);
-  Serial.println("[+] Hardware 3-LED Self-Test Completed.\n");
+  digitalWrite(PIN_LED_BLUE,  LOW);
+  digitalWrite(PIN_LED_GREEN, LOW);
+  Serial.println("[+] 2-LED Self-Test Completed.\n");
 
   // -------------------------------------------------------------
-  // CONNECT TO WI-FI
+  // REGISTER WI-FI EVENT LISTENER & CONNECT
   // -------------------------------------------------------------
-  Serial.printf("[*] Connecting to Wi-Fi: '%s' ...\n", ssid);
+  WiFi.onEvent(WiFiEvent);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+
+  Serial.printf("[*] Connecting to Wi-Fi: '%s' ...\n", ssid);
   WiFi.begin(ssid, password);
 
-  while (WiFi.status() != WL_CONNECTED) {
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
     delay(250);
     Serial.print(".");
   }
 
-  Serial.println("\n[+] Wi-Fi Connected Successfully!");
-  Serial.print("[*] ESP32 IP Address : http://");
-  Serial.println(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED) {
+    isWifiConnected = true;
+    Serial.println("\n[+] Wi-Fi Connected!");
+    Serial.print("[*] ESP32 IP: http://");
+    Serial.println(WiFi.localIP());
+  } else {
+    isWifiConnected = false;
+    Serial.println("\n[!] Wi-Fi Connection Timeout. Will retry in loop...");
+  }
 
   udp.begin(UDP_PORT);
   Serial.printf("[*] Fast UDP Listener on Port %d\n", UDP_PORT);
   Serial.printf("[*] Target Server API  : http://%s:%d/api/dip_status\n\n", laptop_ip, laptop_port);
-
-  lastServerContactTime = millis();
 }
 
 void loop() {
   unsigned long now = millis();
 
   // -------------------------------------------------------------
-  // 1. FAST UDP INSTANT PACKETS (< 2ms reaction)
+  // 1. WI-FI STATUS CHECK
+  // -------------------------------------------------------------
+  isWifiConnected = (WiFi.status() == WL_CONNECTED);
+
+  // CRITICAL RULE: If Wi-Fi is disconnected, SERVER IS UNREACHABLE!
+  // BOTH Blue and Green LEDs MUST be forced OFF immediately (0ms delay).
+  if (!isWifiConnected) {
+    digitalWrite(PIN_LED_BLUE,  LOW);
+    digitalWrite(PIN_LED_GREEN, LOW);
+    serverAlive = false;
+    readerAlive = false;
+    failedPollCount = 0;
+    delay(50); // Yield to background tasks
+    return;    // Do not attempt network calls when Wi-Fi is down
+  }
+
+  // -------------------------------------------------------------
+  // 2. FAST UDP PACKET RECEPTION (< 2ms reaction)
   // -------------------------------------------------------------
   int packetSize = udp.parsePacket();
   if (packetSize > 0) {
     int len = udp.read(incomingPacket, 255);
     if (len > 0) incomingPacket[len] = 0;
-    lastServerContactTime = now;
 
-    // A) Crane Immersion Started (1st Tag Read -> Dipping starts!)
-    if (strncmp(incomingPacket, "DIP_START", 9) == 0) {
+    serverAlive = true;
+    lastServerResponseTime = now;
+    failedPollCount = 0;
+
+    if (strncmp(incomingPacket, "HB:1", 4) == 0) {
       readerAlive = true;
-      triggerDipStart();
-    }
-    // B) Crane Immersion Completed (2nd Tag Read -> Dipping stops!)
-    else if (strncmp(incomingPacket, "DIP_STOP", 8) == 0) {
-      readerAlive = true;
-      triggerDipComplete();
-    }
-    // C) Timer Reset
-    else if (strncmp(incomingPacket, "DIP_RESET", 9) == 0) {
-      dippingActive = false;
-      dipCompleted = false;
-      flashCompleteUntil = 0;
-    }
-    // D) Heartbeat Online
-    else if (strncmp(incomingPacket, "HB:1", 4) == 0) {
-      readerAlive = true;
-    }
-    // E) Heartbeat Timeout
-    else if (strncmp(incomingPacket, "HB:0", 4) == 0) {
+    } else if (strncmp(incomingPacket, "HB:0", 4) == 0) {
       readerAlive = false;
-      dippingActive = false;
     }
   }
 
   // -------------------------------------------------------------
-  // 2. HTTP POLLING CHECK (Every 500ms for 100% sync guarantee)
+  // 3. HTTP POLLING CHECK (Every 500ms sync check)
   // -------------------------------------------------------------
-  if (WiFi.status() == WL_CONNECTED && (now - lastPollTime >= POLL_INTERVAL_MS)) {
+  if (now - lastPollTime >= POLL_INTERVAL_MS) {
     lastPollTime = now;
 
     HTTPClient http;
     String url = "http://" + String(laptop_ip) + ":" + String(laptop_port) + "/api/dip_status";
     http.begin(url);
-    http.setTimeout(2000); // 2-second safe timeout
+    http.setTimeout(1000); // 1-second timeout (fast failure detection)
     int httpCode = http.GET();
 
     if (httpCode == 200) {
-      lastServerContactTime = now;
       String payload = http.getString();
+      serverAlive = true;
+      lastServerResponseTime = now;
+      failedPollCount = 0;
 
-      // Check Reader Alive
-      readerAlive = (payload.indexOf("\"reader_alive\":true") != -1 || payload.indexOf("\"reader_alive\": true") != -1);
-
-      // Check Dipping State from Server
-      bool serverDipping = (payload.indexOf("\"dip_active\":true") != -1 || payload.indexOf("\"dip_active\": true") != -1);
-      
-      if (serverDipping && !dippingActive) {
-        triggerDipStart();
-      } else if (!serverDipping && dippingActive) {
-        triggerDipComplete();
+      // Extract reader_alive from JSON payload
+      if (payload.indexOf("\"reader_alive\":true") != -1 || payload.indexOf("\"reader_alive\": true") != -1) {
+        readerAlive = true;
+      } else {
+        readerAlive = false;
+      }
+    } else {
+      // Server returned error, connection refused (server stopped), or timed out
+      failedPollCount++;
+      // If server fails 2 consecutive polls (~1s), declare server DEAD immediately!
+      if (failedPollCount >= 2) {
+        serverAlive = false;
       }
     }
     http.end();
   }
 
   // -------------------------------------------------------------
-  // 3. FAIL-SAFE WATCHDOG CHECK
+  // 4. WATCHDOG TIMER CHECK
   // -------------------------------------------------------------
-  bool serverConnectionLost = (now - lastServerContactTime > SERVER_LOST_TIMEOUT_MS);
-  if (serverConnectionLost) {
-    readerAlive = false;
-    dippingActive = false;
+  // If no successful HTTP/UDP response from server in 2.0s, server is DEAD!
+  if (now - lastServerResponseTime > SERVER_TIMEOUT_MS) {
+    serverAlive = false;
   }
 
   // -------------------------------------------------------------
-  // 4. 3-LED OUTPUT CONTROL
+  // 5. LED STATUS ACTUATION
   // -------------------------------------------------------------
-  bool isDisconnected = !readerAlive || serverConnectionLost;
+  // 🔵 Blue LED: Wi-Fi Connected AND RFID Reader Connected
+  // - Turns OFF immediately if Wi-Fi drops OR RFID reader disconnects
+  // - Turns SOLID ON when Wi-Fi is connected AND reader is alive
+  bool blueState = isWifiConnected && readerAlive;
+  digitalWrite(PIN_LED_BLUE, blueState ? HIGH : LOW);
 
-  // STATE A: DISCONNECTED / FAULT
-  if (isDisconnected) {
-    digitalWrite(PIN_D18_DISCONNECTED, HIGH); // D18 SOLID ON
-    digitalWrite(PIN_D21_HEARTBEAT,    LOW);  // D21 OFF
-    digitalWrite(PIN_D19_TAG_TIMER,    LOW);  // D19 OFF
-  }
-  // STATE B: CONNECTED & HEALTHY (D18 is OFF, D21 Heartbeat is ALWAYS SOLID ON!)
-  else {
-    digitalWrite(PIN_D18_DISCONNECTED, LOW);  // D18 OFF
-    digitalWrite(PIN_D21_HEARTBEAT,    HIGH); // D21 SOLID ON (Heartbeat stays ON continuously!)
+  // 🟢 Green LED: Server Running Status ONLY
+  // - Turns OFF immediately if Wi-Fi drops OR Server stops (< 1s)
+  // - Turns SOLID ON ONLY when Wi-Fi is connected AND Server is running
+  bool greenState = isWifiConnected && serverAlive;
+  digitalWrite(PIN_LED_GREEN, greenState ? HIGH : LOW);
 
-    // Tag / Dipping LED (D19) Control:
-    if (dippingActive) {
-      // 1. Tag Detected in Bath: D19 SOLID ON
-      digitalWrite(PIN_D19_TAG_TIMER, HIGH);
-    }
-    else if (dipCompleted && (now < flashCompleteUntil)) {
-      // 2. Jig Lifted Out of Bath: D19 flashes rapidly for 3.5s
-      if (now - lastBlinkToggle >= 150) {
-        lastBlinkToggle = now;
-        blinkState = !blinkState;
-        digitalWrite(PIN_D19_TAG_TIMER, blinkState ? HIGH : LOW);
-      }
-    }
-    else {
-      // 3. No Tag Data Available / Standby: D19 OFF
-      dipCompleted = false;
-      digitalWrite(PIN_D19_TAG_TIMER, LOW);
-    }
-  }
-
-  // Permanent safety: Onboard Blue LED always LOW
+  // Keep onboard LED permanently OFF
   digitalWrite(PIN_BOARD_LED, LOW);
 }
